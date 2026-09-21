@@ -6,7 +6,7 @@
 macOS 这边只是换了一套加载器——Windows 靠 `winhttp.dll` + `doorstop_config.ini`
 注入，macOS 得靠 `DYLD_INSERT_LIBRARIES` 加一个 dylib。
 
-已在 macOS 26.5.2 / Apple M2 Max / Sephiria 1.0.30（Unity 6000.3.21f1）+ 插件 v2.5.2 上实测通过。
+已在 macOS 26.5.2 / Apple M2 Max 及 macOS 27.0 / Apple M1 Pro / Sephiria 1.0.33（Unity 6000.3.21f1）+ 插件 v2.5.4 上实测通过。
 
 ## 安装
 
@@ -49,7 +49,8 @@ Steam 库 → 右键 Sephiria → 属性 → 通用 → 启动选项，粘贴（
 其余配置项和 Windows 版完全一样，见[主 README](../docs/README.md)。
 
 出问题先看 `游戏目录/BepInEx/LogOutput.log`；如果 BepInEx 根本没起来，
-看 `Sephiria.app/Contents/MacOS/preloader_<时间戳>.log`。
+看启动日志 `游戏目录/BepInEx/run_bepinex.log`（记录脚本启动和注入过程）
+或 `Sephiria.app/Contents/MacOS/preloader_<时间戳>.log`。
 
 ## 卸载
 
@@ -130,3 +131,41 @@ Steam 启动选项启动，脚本里 fork 出来的每一个 `uname` / `sysctl` 
 
 （存的时候有个 `if [ -z "${VAR+x}" ]` 判断不能省：脚本会通过 `arch` 把自己重新
 exec 一遍，没有这个判断的话第二遍会用空值把第一遍存的覆盖掉，Steam 悬浮窗就悄悄丢了。）
+
+## macOS 27+ 适配与失效原因剖析
+
+在 macOS 27 环境下，曾出现 Mod 无法正常运行且没有任何运行日志输出的问题，排查发现是由于系统沙盒与执行机制收紧导致的连环问题：
+
+### 1. `defaults read` 跨目录沙盒拒绝导致脚本静默闪退（核心原因）
+
+原启动脚本在解析 `.app` 内部主二进制文件名时调用了系统命令：
+```sh
+inner_executable_name=$(defaults read "${real_executable_name}/Contents/Info" CFBundleExecutable)
+```
+macOS 27 对 `defaults` 背后的 `cfprefsd` 守护进程实施了更严格的文件沙盒隔离。当跨目录读取 Steam 库中的 `Info.plist` 时，`cfprefsd` 会直接抛出权限异常：
+```text
+sandbox_extension_issue_file failed ... 1 (Operation not permitted)
+Error: Domain '.../Contents/Info' not found.
+```
+由于脚本在开头启用了 `set -e`（遇到任何错误立即终止退出），**`run_bepinex.sh` 在执行游戏二进制之前就以 Exit Code 1 静默夭折**。游戏根本没有机会进入 BepInEx 注入流程。
+
+**解决方案**：改用系统内置、直接就地解析 XML/二进制 plist 且不受 `cfprefsd` 沙盒限制的 `plutil -extract CFBundleExecutable raw` 与 `/usr/libexec/PlistBuddy`，并保留多层安全回退。
+
+### 2. Steam 启动环境下的“日志黑洞”
+
+当通过 Steam 的“启动选项”运行游戏时，子进程不挂载可见的终端控制台。`run_bepinex.sh` 和 `doorstop_shim.c` 原先的报错与状态追踪全部打印在标准错误流 `stderr` 上。
+- 一旦脚本在启动早期出错（如上述 `defaults read` 闪退），所有错误输出都被系统默默丢弃；
+- 此时 BepInEx 引擎尚未初始化，`BepInEx/LogOutput.log` 完全没有被创建；
+- 最终在用户侧表现为：游戏无法加载 Mod，且整个游戏目录里“看不到任何运行日志”。
+
+**解决方案**：在 `run_bepinex.sh` 检测到非终端启动环境（如 Steam 启动）时，自动将 `stdout` 和 `stderr` 重定向并追加记录到：
+```text
+游戏目录/BepInEx/run_bepinex.log
+```
+使启动脚本、`doorstop_shim` 注入垫片及引擎初期的所有诊断信息全程透明可查。
+
+### 3. `DYLD_INSERT_LIBRARIES` 注入路径绝对化
+
+原脚本使用 `export DYLD_INSERT_LIBRARIES="libdoorstop.dylib"` 配合 `DYLD_LIBRARY_PATH` 进行相对寻址。新系统在非预期工作目录下可能出现动态库寻址失败或被限制规则过滤。
+
+**解决方案**：统一将注入路径改为绝对路径 `${doorstop_directory}${doorstop_name}`。
