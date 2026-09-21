@@ -159,6 +159,13 @@ fi
 # Use POSIX-compatible way to get the directory of the executable
 a="/$0"; a=${a%/*}; a=${a#/}; a=${a:-.}; BASEDIR=$(cd "$a" || exit; pwd -P)
 
+# When launched without a terminal (e.g. via Steam), redirect stdout & stderr to a log file
+if [ ! -t 1 ] && [ -z "$DOORSTOP_NO_LOG_REDIRECT" ]; then
+    mkdir -p "${BASEDIR}/BepInEx" 2>/dev/null || true
+    exec >> "${BASEDIR}/BepInEx/run_bepinex.log" 2>&1
+    echo "=== [run_bepinex.sh] $(date) (PID $$) ==="
+fi
+
 arch=""
 executable_path=""
 lib_extension=""
@@ -168,7 +175,12 @@ abs_path() {
     if [ "$1" = "${1#/}" ]; then
         set -- "${BASEDIR}/${1}"
     fi
-    echo "$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
+    dir_part="$(dirname "$1")"
+    if [ -d "$dir_part" ]; then
+        echo "$(cd "$dir_part" && pwd)/$(basename "$1")"
+    else
+        echo "$1"
+    fi
 }
 
 # Set executable path and the extension to use for the libdoorstop shared object as well as check whether we're running on Apple Silicon
@@ -191,7 +203,7 @@ case ${os_type} in
                 if [ "$real_executable_name" = "${real_executable_name%.app}" ]; then
                     real_executable_name="${real_executable_name}.app"
                 fi
-                inner_executable_name=$(defaults read "${real_executable_name}/Contents/Info" CFBundleExecutable)
+                inner_executable_name=$(plutil -extract CFBundleExecutable raw "${real_executable_name}/Contents/Info.plist" 2>/dev/null || /usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "${real_executable_name}/Contents/Info.plist" 2>/dev/null || defaults read "${real_executable_name}/Contents/Info" CFBundleExecutable 2>/dev/null || basename "${real_executable_name}" .app)
                 executable_path="${real_executable_name}/Contents/MacOS/${inner_executable_name}"
             ;;
         esac
@@ -377,11 +389,12 @@ DYLD_INSERT_LIBRARIES="${DOORSTOP_SAVED_DYLD_INSERT-}"
 DYLD_LIBRARY_PATH="${DOORSTOP_SAVED_DYLD_PATH-}"
 unset DOORSTOP_SAVED_DYLD_INSERT DOORSTOP_SAVED_DYLD_PATH
 
+doorstop_path="${doorstop_directory}${doorstop_name}"
 export DYLD_LIBRARY_PATH="${doorstop_directory}:${DYLD_LIBRARY_PATH}"
 if [ -z "$DYLD_INSERT_LIBRARIES" ]; then
-    export DYLD_INSERT_LIBRARIES="${doorstop_name}"
+    export DYLD_INSERT_LIBRARIES="${doorstop_path}"
 else
-    export DYLD_INSERT_LIBRARIES="${doorstop_name}:${DYLD_INSERT_LIBRARIES}"
+    export DYLD_INSERT_LIBRARIES="${doorstop_path}:${DYLD_INSERT_LIBRARIES}"
 fi
 
 # Exec the game directly. The DYLD_* vars exported above survive into the

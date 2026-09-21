@@ -49,7 +49,8 @@ Steam 库 → 右键 Sephiria → 属性 → 通用 → 启动选项，粘贴（
 其余配置项和 Windows 版完全一样，见[主 README](../docs/README.md)。
 
 出问题先看 `游戏目录/BepInEx/LogOutput.log`；如果 BepInEx 根本没起来，
-看 `Sephiria.app/Contents/MacOS/preloader_<时间戳>.log`。
+看启动日志 `游戏目录/BepInEx/run_bepinex.log`（记录脚本启动和注入过程）
+或 `Sephiria.app/Contents/MacOS/preloader_<时间戳>.log`。
 
 ## 卸载
 
