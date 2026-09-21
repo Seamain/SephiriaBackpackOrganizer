@@ -75,7 +75,7 @@
 
 ### 方式二：macOS
 
-上面的完整包是 Windows 版。macOS 原生版见 [macos/README.md](../macos/README.md)：
+上面的完整包是 Windows 版。macOS 原生版见 [macos/README.md](../macos/README.md)（已适配 macOS 26 / 27+）：
 
 ```sh
 cd macos && ./install.sh
